@@ -2,6 +2,8 @@
 use crate::rcc::{RTCSrc, Rcc};
 use crate::stm32::RTC;
 use crate::time::*;
+use nb;
+use void::Void;
 
 pub struct Rtc {
     rb: RTC,
@@ -10,6 +12,8 @@ pub struct Rtc {
 impl Rtc {
     pub fn new(rtc: RTC, src: RTCSrc, rcc: &mut Rcc) -> Self {
         let mut rtc = Rtc { rb: rtc };
+        rtc.off_alarm_a();
+        rtc.cancel_wakeup();
         rcc.enable_rtc(src);
         rtc.modify(|rb| {
             rb.cr.modify(|_, w| w.fmt().clear_bit());
@@ -111,6 +115,119 @@ impl Rtc {
     pub fn get_week_day(&self) -> u8 {
         self.rb.dr.read().wdu().bits()
     }
+
+    fn enable_write (& mut self) {
+        self.rb.wpr.write(|w| unsafe { w.bits(0xCA) });
+        self.rb.wpr.write(|w| unsafe { w.bits(0x53) });
+    }
+    fn desable_write (& mut self) {
+        self.rb.wpr.write(|w| unsafe { w.bits(0xFF) });
+    }
+
+    pub fn set_alarma_date(&mut self, date: &Date) {
+        let (dt, du) = bcd2_encode(date.day);
+
+        self.modify(|rb| {
+            rb.alrmar.write(|w| unsafe {
+                w.dt()
+                    .bits(dt)
+                    .du()
+                    .bits(du)
+                    .msk4().clear_bit()
+                    .wdsel().clear_bit()
+            });
+        });
+    }
+
+    pub fn set_alarma_time(&mut self, time: &Time) {
+        let (ht, hu) = bcd2_encode(time.hours);
+        let (mnt, mnu) = bcd2_encode(time.minutes);
+        let (st, su) = bcd2_encode(time.seconds);
+        self.modify(|rb| {
+            rb.alrmar.write(|w| unsafe {
+                w.ht()
+                    .bits(ht)
+                    .hu()
+                    .bits(hu)
+                    .msk3().clear_bit()
+                    .msk2().clear_bit()
+                    .msk1().clear_bit()
+                    .mnt()
+                    .bits(mnt)
+                    .mnu()
+                    .bits(mnu)
+                    .st()
+                    .bits(st)
+                    .su()
+                    .bits(su)
+                    .pm()
+                    .clear_bit()
+            });
+            //rb.cr.modify(|_, w| w.fmt().bit(time.daylight_savings));
+        });
+    }
+
+    pub fn get_alarma_time(&self) -> Time {
+        let timer = self.rb.alrmar.read();
+        Time::new(
+            bcd2_decode(timer.ht().bits(), timer.hu().bits()).hours(),
+            bcd2_decode(timer.mnt().bits(), timer.mnu().bits()).minutes(),
+            bcd2_decode(timer.st().bits(), timer.su().bits()).seconds(),
+            self.rb.cr.read().fmt().bit(),
+        )
+    }
+
+    pub fn init_alarm_a(&mut self) {
+        self.modify(|rb| rb.cr.modify(|_, w| {
+            w.alrae().set_bit();
+            w.alraie().set_bit()
+        }));
+    }
+    pub fn off_alarm_a(&mut self){
+        if self.rb.cr.read().alrae().bit_is_set(){
+            self.modify(|rb| rb.cr.modify(|_, w| {
+                w.alrae().clear_bit();
+                w.alraie().clear_bit()
+            }));
+        }
+    }
+
+    pub fn set_wakeup(&mut self, div_a:u8, div_s:u8, duration: WakeUpDurationMode, seconds:u16 ) -> nb::Result<(), Void> {
+        self.enable_write();
+        // disable WU
+        while self.rb.icsr.read().wutwf().bit_is_clear() {}
+        self.rb.cr.modify(|_, w| w.wute().clear_bit());
+
+        self.rb.prer.modify(|_, w| unsafe { w.prediv_a().bits(div_a.into()) });
+        self.rb.prer.modify(|_, w| unsafe { w.prediv_s().bits(div_s.into()) });
+
+
+        match duration {
+            Duration18H=> self.rb.cr.modify(|_, w| unsafe { w.wucksel().bits(0b10) }) ,
+            Duration36H=> self.rb.cr.modify(|_, w| unsafe { w.wucksel().bits(0b11) }),
+            _ => self.rb.cr.modify(|_, w| unsafe { w.wucksel().bits(0b10) }),
+        }
+
+        self.rb.wutr.modify(|_, w| unsafe { w.wut().bits(seconds.into()) });
+        self.rb.cr.modify(|_, w| w.wutie().set_bit());
+        // enable WU
+        self.rb.cr.modify(|_, w| w.wute().set_bit());
+
+        self.desable_write();
+        Ok(())
+    }
+
+    // set prescaller to 1hz
+    pub fn wakeup_default(&mut self, seconds:u16){
+        self.set_wakeup(0x7f, 0xff, WakeUpDurationMode::Duration18H, seconds);
+    }
+
+    pub fn cancel_wakeup(&mut self)  {
+        if self.rb.sr.read().wutf().bit_is_set() {
+            // wait implemetn writable register
+            self.modify(|rb| rb.scr.modify(|_, w| w.cwutf().clear_bit()));
+        }
+    }
 }
 
 pub trait RtcExt {
@@ -138,4 +255,9 @@ fn bcd2_decode(fst: u8, snd: u8) -> u32 {
     let value = snd | fst << 4;
     let value = (value & 0x0F) + ((value & 0xF0) >> 4) * 10;
     value as u32
+}
+
+pub enum WakeUpDurationMode {
+    Duration18H,
+    Duration36H,
 }
