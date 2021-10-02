@@ -13,7 +13,6 @@ impl Rtc {
     pub fn new(rtc: RTC, src: RTCSrc, rcc: &mut Rcc) -> Self {
         let mut rtc = Rtc { rb: rtc };
         rtc.off_alarm_a();
-        rtc.cancel_wakeup();
         rcc.enable_rtc(src);
         rtc.modify(|rb| {
             rb.cr.modify(|_, w| w.fmt().clear_bit());
@@ -127,13 +126,16 @@ impl Rtc {
     pub fn set_alarma_date(&mut self, date: &Date) {
         let (dt, du) = bcd2_encode(date.day);
 
+        while self.rb.icsr.read().alrawf().bit_is_clear() {}
+
         self.modify(|rb| {
             rb.alrmar.write(|w| unsafe {
-                w.dt()
+                w
+                    .dt()
                     .bits(dt)
                     .du()
                     .bits(du)
-                    .msk4().clear_bit()
+                    .msk4().set_bit()
                     .wdsel().clear_bit()
             });
         });
@@ -143,14 +145,18 @@ impl Rtc {
         let (ht, hu) = bcd2_encode(time.hours);
         let (mnt, mnu) = bcd2_encode(time.minutes);
         let (st, su) = bcd2_encode(time.seconds);
+
+        while self.rb.icsr.read().alrawf().bit_is_clear() {}
+
         self.modify(|rb| {
             rb.alrmar.write(|w| unsafe {
-                w.ht()
+                w
+                    .ht()
                     .bits(ht)
                     .hu()
                     .bits(hu)
-                    .msk3().clear_bit()
-                    .msk2().clear_bit()
+                    .msk3().set_bit()
+                    .msk2().set_bit()
                     .msk1().clear_bit()
                     .mnt()
                     .bits(mnt)
@@ -167,6 +173,15 @@ impl Rtc {
         });
     }
 
+    pub fn get_alarma_date(&self) -> Date {
+        let timer = self.rb.alrmar.read();
+        Date::new(
+            2021.year(),
+            1.month(),
+            bcd2_decode(timer.dt().bits(), timer.du().bits()).day(),
+        )
+    }
+
     pub fn get_alarma_time(&self) -> Time {
         let timer = self.rb.alrmar.read();
         Time::new(
@@ -176,6 +191,10 @@ impl Rtc {
             self.rb.cr.read().fmt().bit(),
         )
     }
+    pub fn get_alarm_init(&self) -> bool {
+        self.rb.cr.read().alrae().bit_is_set()
+    }
+
 
     pub fn init_alarm_a(&mut self) {
         self.modify(|rb| rb.cr.modify(|_, w| {
@@ -183,6 +202,7 @@ impl Rtc {
             w.alraie().set_bit()
         }));
     }
+
     pub fn off_alarm_a(&mut self){
         if self.rb.cr.read().alrae().bit_is_set(){
             self.modify(|rb| rb.cr.modify(|_, w| {
@@ -192,34 +212,41 @@ impl Rtc {
         }
     }
 
-    pub fn set_wakeup(&mut self, div_a:u8, div_s:u8, duration: WakeUpDurationMode, seconds:u16 ) -> nb::Result<(), Void> {
-        self.enable_write();
+    pub fn set_wakeup(&mut self,  duration: WakeUpDurationMode, seconds:u16 ) -> nb::Result<(), Void> {
+        self.cancel_wakeup();
+
+        //self.enable_write();
+        self.modify(|rb| rb.icsr.write(|w| w.init().clear_bit()));
         // disable WU
+        self.modify(|rb| rb.cr.modify(|_, w| w.wute().clear_bit()));
+
         while self.rb.icsr.read().wutwf().bit_is_clear() {}
-        self.rb.cr.modify(|_, w| w.wute().clear_bit());
 
-        self.rb.prer.modify(|_, w| unsafe { w.prediv_a().bits(div_a.into()) });
-        self.rb.prer.modify(|_, w| unsafe { w.prediv_s().bits(div_s.into()) });
-
+        self.modify(|rb| rb.wutr.modify(|_, w| unsafe { w.wut().bits(seconds.into()) }));
 
         match duration {
-            Duration18H=> self.rb.cr.modify(|_, w| unsafe { w.wucksel().bits(0b10) }) ,
-            Duration36H=> self.rb.cr.modify(|_, w| unsafe { w.wucksel().bits(0b11) }),
-            _ => self.rb.cr.modify(|_, w| unsafe { w.wucksel().bits(0b10) }),
+            Duration18H=> self.modify(|rb| rb.cr.modify(|_, w| unsafe { w.wucksel().bits(0b10) })) ,
+            Duration36H=> self.modify(|rb| rb.cr.modify(|_, w| unsafe { w.wucksel().bits(0b11) })),
+            _ => self.modify(|rb| rb.cr.modify(|_, w| unsafe { w.wucksel().bits(0b10) })),
         }
 
-        self.rb.wutr.modify(|_, w| unsafe { w.wut().bits(seconds.into()) });
-        self.rb.cr.modify(|_, w| w.wutie().set_bit());
+        self.modify(|rb| rb.cr.modify(|_, w| w.wutie().set_bit()));
         // enable WU
-        self.rb.cr.modify(|_, w| w.wute().set_bit());
+        self.modify(|rb| rb.cr.modify(|_, w| w.wute().set_bit()));
 
-        self.desable_write();
+        //self.desable_write();
         Ok(())
+    }
+
+    fn set_prescaller(&mut self, div_a:u8, div_s:u8){
+        self.modify(|rb| rb.prer.modify(|_, w| unsafe { w.prediv_a().bits(div_a.into()) }));
+        self.modify(|rb| rb.prer.modify(|_, w| unsafe { w.prediv_s().bits(div_s.into()) }));
     }
 
     // set prescaller to 1hz
     pub fn wakeup_default(&mut self, seconds:u16){
-        self.set_wakeup(0x7f, 0xff, WakeUpDurationMode::Duration18H, seconds);
+        self.set_prescaller(127, 255);//0x7f, 0xff
+        self.set_wakeup( WakeUpDurationMode::Duration18H, seconds);
     }
 
     pub fn cancel_wakeup(&mut self)  {
