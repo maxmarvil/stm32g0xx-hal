@@ -214,33 +214,32 @@ impl Rtc {
 
     pub fn set_wakeup(&mut self,  duration: WakeUpDurationMode, seconds:u16 ) -> nb::Result<(), Void> {
         self.cancel_wakeup();
-
-        //self.enable_write();
         self.modify(|rb| rb.icsr.write(|w| w.init().clear_bit()));
         // disable WU
         self.modify(|rb| rb.cr.modify(|_, w| w.wute().clear_bit()));
 
         while self.rb.icsr.read().wutwf().bit_is_clear() {}
-
-        self.modify(|rb| rb.wutr.modify(|_, w| unsafe { w.wut().bits(seconds.into()) }));
-
         match duration {
             Duration18H=> self.modify(|rb| rb.cr.modify(|_, w| unsafe { w.wucksel().bits(0b10) })) ,
             Duration36H=> self.modify(|rb| rb.cr.modify(|_, w| unsafe { w.wucksel().bits(0b11) })),
             _ => self.modify(|rb| rb.cr.modify(|_, w| unsafe { w.wucksel().bits(0b10) })),
         }
+        self.modify(|rb| rb.wutr.modify(|_, w| unsafe { w.wut().bits(seconds.into()) }));
 
         self.modify(|rb| rb.cr.modify(|_, w| w.wutie().set_bit()));
         // enable WU
         self.modify(|rb| rb.cr.modify(|_, w| w.wute().set_bit()));
 
-        //self.desable_write();
         Ok(())
     }
 
     fn set_prescaller(&mut self, div_a:u8, div_s:u8){
         self.modify(|rb| rb.prer.modify(|_, w| unsafe { w.prediv_a().bits(div_a.into()) }));
         self.modify(|rb| rb.prer.modify(|_, w| unsafe { w.prediv_s().bits(div_s.into()) }));
+    }
+
+    pub fn get_prescaller(&mut self ) -> (u16, u16){
+        (self.rb.prer.read().prediv_a().bits().into(), self.rb.prer.read().prediv_s().bits().into())
     }
 
     // set prescaller to 1hz
