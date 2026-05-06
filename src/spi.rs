@@ -370,6 +370,7 @@ impl<SPI: Instance, PINS> spi::SpiBus for SpiBus<SPI, PINS> {
     fn write(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
         for byte in bytes.iter() {
             block!(self.send_byte(*byte))?;
+            let _ = self.spi.dr8().read();
         }
         block!(self.wait_until_not_busy())?;
         Ok(())
