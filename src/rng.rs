@@ -1,18 +1,19 @@
 use core::cmp;
 use core::mem;
 
-use crate::hal::blocking::rng;
 use crate::rcc::{Enable, Rcc, Reset};
 use crate::stm32::RNG;
 
-#[derive(Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RngClkSource {
     HSI = 1,
     SysClock = 2,
     PLLQ = 3,
 }
 
-#[derive(Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RngClkDivider {
     NotDivided = 0,
     Div2 = 1,
@@ -50,7 +51,8 @@ impl Default for Config {
     }
 }
 
-#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ErrorKind {
     ClockError,
     SeedError,
@@ -64,11 +66,11 @@ impl RngExt for RNG {
     fn constrain(self, cfg: Config, rcc: &mut Rcc) -> Rng {
         RNG::enable(rcc);
         RNG::reset(rcc);
-        rcc.ccipr
+        rcc.ccipr()
             .modify(|_, w| unsafe { w.rngsel().bits(cfg.clk_src as u8) });
-        rcc.ccipr
+        rcc.ccipr()
             .modify(|_, w| unsafe { w.rngdiv().bits(cfg.clk_div as u8) });
-        self.cr.modify(|_, w| w.rngen().set_bit());
+        self.cr().modify(|_, w| w.rngen().set_bit());
         Rng { rb: self }
     }
 }
@@ -86,9 +88,9 @@ pub struct Rng {
 impl Rng {
     pub fn gen(&mut self) -> Result<u32, ErrorKind> {
         loop {
-            let status = self.rb.sr.read();
+            let status = self.rb.sr().read();
             if status.drdy().bit() {
-                return Ok(self.rb.dr.read().rndata().bits());
+                return Ok(self.rb.dr().read().rndata().bits());
             }
             if status.cecs().bit() {
                 return Err(ErrorKind::ClockError);
@@ -130,6 +132,10 @@ impl Rng {
         }
         Ok(())
     }
+
+    pub fn read(&mut self, buffer: &mut [u8]) -> Result<(), ErrorKind> {
+        self.fill(buffer)
+    }
 }
 
 impl core::iter::Iterator for Rng {
@@ -137,14 +143,6 @@ impl core::iter::Iterator for Rng {
 
     fn next(&mut self) -> Option<u32> {
         self.gen().ok()
-    }
-}
-
-impl rng::Read for Rng {
-    type Error = ErrorKind;
-
-    fn read(&mut self, buffer: &mut [u8]) -> Result<(), Self::Error> {
-        self.fill(buffer)
     }
 }
 
@@ -170,6 +168,8 @@ macro_rules! rng_core {
                     let mut i = 0_usize;
                     while i < buffer.len() {
                         let random_word = self.gen()?;
+
+                        #[allow(unnecessary_transmutes, clippy::transmute_num_to_bytes)]
                         let bytes: [$type; BATCH_SIZE] = unsafe { mem::transmute(random_word) };
                         let n = cmp::min(BATCH_SIZE, buffer.len() - i);
                         buffer[i..i + n].copy_from_slice(&bytes[..n]);

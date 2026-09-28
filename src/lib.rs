@@ -16,6 +16,9 @@ pub extern crate stm32g0;
 
 pub use nb::block;
 
+#[cfg(feature = "device-selected")]
+pub use stm32 as pac;
+
 #[cfg(feature = "stm32g030")]
 pub use stm32g0::stm32g030 as stm32;
 
@@ -34,9 +37,17 @@ pub use stm32g0::stm32g081 as stm32;
 #[cfg(feature = "stm32g070")]
 pub use stm32g0::stm32g070 as stm32;
 
+#[cfg(feature = "stm32g0b1")]
+pub use stm32g0::stm32g0b1 as stm32;
+
+#[cfg(feature = "stm32g0c1")]
+pub use stm32g0::stm32g0c1 as stm32;
+
 #[cfg(feature = "rt")]
 pub use crate::stm32::interrupt;
 
+#[cfg(any(feature = "stm32g041", feature = "stm32g081"))]
+pub mod aes;
 pub mod analog;
 pub mod crc;
 pub mod dma;

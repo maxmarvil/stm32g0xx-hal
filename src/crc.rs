@@ -21,7 +21,6 @@
 use crate::rcc::{Enable, Rcc, Reset};
 use crate::stm32::CRC;
 use core::hash::Hasher;
-use core::ptr;
 
 /// Extension trait to constrain the CRC peripheral.
 pub trait CrcExt {
@@ -45,6 +44,8 @@ impl CrcExt for CRC {
 }
 
 /// Polynomial settings.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Polynomial {
     /// 7-bit polynomial, only the lowest 7 bits are valid
     L7(u8),
@@ -57,6 +58,8 @@ pub enum Polynomial {
 }
 
 /// Bit reversal settings.
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum BitReversal {
     /// Reverse bits by byte
     ByByte,
@@ -78,28 +81,24 @@ impl Config {
     /// Sets the initial value of the CRC.
     pub fn initial_value(mut self, init: u32) -> Self {
         self.initial_value = init;
-
         self
     }
 
     /// Sets the polynomial of the CRC.
     pub fn polynomial(mut self, polynomial: Polynomial) -> Self {
         self.polynomial = polynomial;
-
         self
     }
 
     /// Enables bit reversal of the inputs.
     pub fn input_bit_reversal(mut self, rev: Option<BitReversal>) -> Self {
         self.input_bit_reversal = rev;
-
         self
     }
 
     /// Enables bit reversal of the outputs.
     pub fn output_bit_reversal(mut self, rev: bool) -> Self {
         self.output_bit_reversal = rev;
-
         self
     }
 
@@ -121,9 +120,9 @@ impl Config {
             Some(BitReversal::ByWord) => 0b11,
         };
 
-        crc.init.write(|w| unsafe { w.crc_init().bits(init) });
-        crc.pol.write(|w| unsafe { w.bits(poly) });
-        crc.cr.write(|w| {
+        crc.init().write(|w| unsafe { w.crc_init().bits(init) });
+        crc.pol().write(|w| unsafe { w.bits(poly) });
+        crc.cr().write(|w| {
             unsafe {
                 w.rev_in()
                     .bits(in_rev_bits)
@@ -148,12 +147,21 @@ impl Config {
 pub struct Crc {}
 
 impl Crc {
+    /// Release CRC peripheral.
+    pub fn release(self) -> Config {
+        Config {
+            initial_value: 0xffff_ffff,
+            polynomial: Polynomial::L32(0x04c1_1db7),
+            input_bit_reversal: None,
+            output_bit_reversal: false,
+        }
+    }
+
     /// This will reset the CRC to its initial condition.
     #[inline]
     pub fn reset(&mut self) {
         let crc = unsafe { &(*CRC::ptr()) };
-
-        crc.cr.modify(|_, w| w.reset().set_bit());
+        crc.cr().modify(|_, w| w.reset().set_bit());
     }
 
     /// This will reset the CRC to its initial condition, however with a specific initial value.
@@ -163,10 +171,9 @@ impl Crc {
     #[inline]
     pub fn reset_with_inital_value(&mut self, initial_value: u32) {
         let crc = unsafe { &(*CRC::ptr()) };
-
-        crc.init
+        crc.init()
             .write(|w| unsafe { w.crc_init().bits(initial_value) });
-        crc.cr.modify(|_, w| w.reset().set_bit());
+        crc.cr().modify(|_, w| w.reset().set_bit());
     }
 
     /// Feed the CRC with data
@@ -175,9 +182,10 @@ impl Crc {
         let crc = unsafe { &(*CRC::ptr()) };
         for byte in data {
             unsafe {
-                // Workaround with svd2rust, it does not generate the byte interface to the DR
-                // register
-                ptr::write_volatile(&crc.dr as *const _ as *mut u8, *byte);
+                core::ptr::write_volatile(
+                    core::cell::UnsafeCell::<u8>::raw_get(crc.dr().as_ptr() as _),
+                    *byte,
+                )
             }
         }
     }
@@ -187,9 +195,7 @@ impl Crc {
     #[inline]
     pub fn result(&mut self) -> u32 {
         let ret = self.peek_result();
-
         self.reset();
-
         ret
     }
 
@@ -198,8 +204,7 @@ impl Crc {
     #[inline]
     pub fn peek_result(&self) -> u32 {
         let crc = unsafe { &(*CRC::ptr()) };
-
-        crc.dr.read().bits()
+        crc.dr().read().bits()
     }
 }
 

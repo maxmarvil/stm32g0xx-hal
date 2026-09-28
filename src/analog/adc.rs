@@ -1,13 +1,20 @@
 //! # Analog to Digital converter
+use core::convert::Infallible;
 use core::ptr;
 
 use crate::gpio::*;
 use crate::rcc::{Enable, Rcc};
 use crate::stm32::ADC;
-use hal::adc::{Channel, OneShot};
+
+pub trait Channel<ADC> {
+    type ID;
+
+    fn channel() -> Self::ID;
+}
 
 /// ADC Result Alignment
-#[derive(PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Align {
     /// Right aligned results (least significant bits)
     ///
@@ -23,7 +30,8 @@ pub enum Align {
 }
 
 /// ADC Sampling Precision
-#[derive(Copy, Clone, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Precision {
     /// 12 bit precision
     B_12 = 0b00,
@@ -36,7 +44,8 @@ pub enum Precision {
 }
 
 /// ADC Sampling time
-#[derive(Copy, Clone, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SampleTime {
     T_2 = 0b000,
     T_4 = 0b001,
@@ -49,7 +58,8 @@ pub enum SampleTime {
 }
 
 // ADC Oversampling ratio
-#[derive(Copy, Clone, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum OversamplingRatio {
     X_2 = 0b000,
     X_4 = 0b001,
@@ -61,20 +71,23 @@ pub enum OversamplingRatio {
     X_256 = 0b111,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ClockSource {
     Pclk(PclkDiv),
     Async(AsyncClockDiv),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PclkDiv {
     PclkD1 = 3,
     PclkD2 = 1,
     PclkD4 = 2,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum AsyncClockDiv {
     AsyncD1 = 0,
     AsyncD2 = 1,
@@ -88,7 +101,8 @@ pub enum AsyncClockDiv {
 }
 
 /// ADC injected trigger source selection
-#[derive(Copy, Clone, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum InjTrigSource {
     TRG_0 = 0b000, // TIM1_TRGO2
     TRG_1 = 0b001, // TIM1_CC4
@@ -106,7 +120,7 @@ pub struct Adc {
     sample_time: SampleTime,
     align: Align,
     precision: Precision,
-    vdda_mv: Option<u32>,
+    vref_cache: Option<u16>,
 }
 
 /// Contains the calibration factors for the ADC which can be reused with [`Adc::set_calibration()`]
@@ -118,28 +132,27 @@ impl Adc {
         // Enable ADC clocks
         ADC::enable(rcc);
 
-        adc.cr.modify(|_, w| w.advregen().set_bit());
+        adc.cr().modify(|_, w| w.advregen().set_bit());
 
         Self {
             rb: adc,
             sample_time: SampleTime::T_2,
             align: Align::Right,
             precision: Precision::B_12,
-            vdda_mv: None,
+            vref_cache: None,
         }
     }
 
     /// Sets ADC source
     pub fn set_clock_source(&mut self, clock_source: ClockSource) {
         match clock_source {
-            ClockSource::Pclk(div) => self
-                .rb
-                .cfgr2
-                .modify(|_, w| unsafe { w.ckmode().bits(div as u8) }),
+            ClockSource::Pclk(div) => {
+                self.rb.cfgr2().modify(|_, w| w.ckmode().set(div as u8));
+            }
             ClockSource::Async(div) => {
-                self.rb.cfgr2.modify(|_, w| unsafe { w.ckmode().bits(0) });
+                self.rb.cfgr2().modify(|_, w| w.ckmode().set(0));
                 self.rb
-                    .ccr
+                    .ccr()
                     .modify(|_, w| unsafe { w.presc().bits(div as u8) });
             }
         }
@@ -152,8 +165,8 @@ impl Adc {
     ///
     /// Do not call if an ADC reading is ongoing.
     pub fn calibrate(&mut self) {
-        self.rb.cr.modify(|_, w| w.adcal().set_bit());
-        while self.rb.cr.read().adcal().bit_is_set() {}
+        self.rb.cr().modify(|_, w| w.adcal().set_bit());
+        while self.rb.cr().read().adcal().bit_is_set() {}
     }
 
     /// Returns the calibration factors used by the ADC
@@ -166,7 +179,7 @@ impl Adc {
     /// Note that VDDA changes and to a lesser extent temperature changes affect the ADC operating conditions and
     /// calibration should be run again for the best accuracy.
     pub fn get_calibration(&self) -> CalibrationFactor {
-        CalibrationFactor(self.rb.calfact.read().calfact().bits())
+        CalibrationFactor(self.rb.calfact().read().calfact().bits())
     }
 
     /// Writes the calibration factors used by the ADC
@@ -175,9 +188,7 @@ impl Adc {
     ///
     /// Do not call if an ADC reading is ongoing.
     pub fn set_calibration(&mut self, calfact: CalibrationFactor) {
-        self.rb
-            .calfact
-            .write(|w| unsafe { w.calfact().bits(calfact.0) });
+        self.rb.calfact().write(|w| w.calfact().set(calfact.0));
     }
 
     /// Set the Adc sampling time
@@ -198,26 +209,24 @@ impl Adc {
     /// The nuber of bits, the oversampling result is shifted in bits at the end of oversampling
     pub fn set_oversampling_shift(&mut self, nrbits: u8) {
         self.rb
-            .cfgr2
+            .cfgr2()
             .modify(|_, w| unsafe { w.ovss().bits(nrbits) });
     }
 
     /// Oversampling of adc according to datasheet of stm32g0, when oversampling is enabled
     pub fn set_oversampling_ratio(&mut self, ratio: OversamplingRatio) {
-        self.rb
-            .cfgr2
-            .modify(|_, w| unsafe { w.ovsr().bits(ratio as u8) });
+        self.rb.cfgr2().modify(|_, w| w.ovsr().set(ratio as u8));
     }
 
     pub fn oversampling_enable(&mut self, enable: bool) {
-        self.rb.cfgr2.modify(|_, w| w.ovse().bit(enable));
+        self.rb.cfgr2().modify(|_, w| w.ovse().bit(enable));
     }
 
     pub fn start_injected(&mut self) {
-        self.rb.cr.modify(|_, w| w.adstart().set_bit());
+        self.rb.cr().modify(|_, w| w.adstart().set_bit());
         // ADSTART bit is cleared to 0 bevor using this function
         // enable self.rb.isr.eos() flag is set after each converstion
-        self.rb.ier.modify(|_, w| w.eocie().set_bit()); // end of sequence interupt enable
+        self.rb.ier().modify(|_, w| w.eocie().set_bit()); // end of sequence interupt enable
     }
 
     pub fn stop_injected(&mut self) {
@@ -225,42 +234,117 @@ impl Adc {
         // ADSTART bit is cleared to 0 bevor using this function
         // disable EOS interrupt
         // maybe self.rb.cr.adstp().set_bit() must be performed before interrupt is disabled + wait abortion
-        self.rb.ier.modify(|_, w| w.eocie().clear_bit()); // end of sequence interupt disable
+        self.rb.ier().modify(|_, w| w.eocie().clear_bit()); // end of sequence interupt disable
+    }
+
+    /// Read actual VREF voltage using the internal reference
+    ///
+    /// If oversampling is enabled, the return value is scaled down accordingly.
+    /// The product of the return value and any ADC reading always gives correct voltage in 4096ths of mV
+    /// regardless of oversampling and shift settings provided that these settings remain the same.
+    pub fn read_vref(&mut self) -> nb::Result<u16, Infallible> {
+        let mut vref = VRef::new();
+        let vref_val = if vref.enabled(self) {
+            self.read(&mut vref)?
+        } else {
+            vref.enable(self);
+            let vref_val = self.read(&mut vref)?;
+            vref.disable(self);
+            vref_val
+        };
+
+        let vref_cal: u32 = unsafe {
+            // DS12766 3.13.2
+            ptr::read_volatile(0x1FFF_75AA as *const u16) as u32
+        };
+
+        // RM0454 14.9 Calculating the actual VDDA voltage using the internal reference voltage
+        // V_DDA = 3 V x VREFINT_CAL / VREFINT_DATA
+        let vref = (vref_cal * 3_000_u32 / vref_val as u32) as u16;
+        self.vref_cache = Some(vref);
+        Ok(vref)
+    }
+
+    /// Get VREF value using cached value if possible
+    ///
+    /// See `read_vref` for more details.
+    pub fn get_vref_cached(&mut self) -> nb::Result<u16, Infallible> {
+        if let Some(vref) = self.vref_cache {
+            Ok(vref)
+        } else {
+            self.read_vref()
+        }
     }
 
     pub fn read_voltage<PIN: Channel<Adc, ID = u8>>(
         &mut self,
         pin: &mut PIN,
-    ) -> nb::Result<u16, ()> {
-        let vdda_mv = if let Some(vdda_mv) = self.vdda_mv {
-            vdda_mv
-        } else {
-            let mut vref = VRef::new();
-            let vref_val: u32 = if vref.enabled(self) {
-                self.read(&mut vref)?
-            } else {
-                vref.enable(self);
-                let vref_val = self.read(&mut vref)?;
-                vref.disable(self);
-                vref_val
-            };
+    ) -> nb::Result<u16, Infallible> {
+        let vref = self.get_vref_cached()?;
 
-            let vref_cal: u32 = unsafe {
-                // DS12766 3.13.2
-                ptr::read_volatile(0x1FFF_75AA as *const u16) as u32
-            };
-
-            // RM0454 14.9 Calculating the actual VDDA voltage using the internal reference voltage
-            // V_DDA = 3 V x VREFINT_CAL / VREFINT_DATA
-            let vdda_mv = vref_cal * 3_000_u32 / vref_val;
-            self.vdda_mv = Some(vdda_mv);
-            vdda_mv
-        };
-
-        self.read(pin).map(|raw: u32| {
-            let adc_mv = (vdda_mv * raw) >> 12;
+        self.read(pin).map(|raw| {
+            let adc_mv = (vref as u32 * raw as u32) >> 12;
             adc_mv as u16
         })
+    }
+
+    pub fn read<PIN: Channel<Adc, ID = u8>>(
+        &mut self,
+        _pin: &mut PIN,
+    ) -> nb::Result<u16, Infallible> {
+        self.power_up();
+        self.rb.cfgr1().modify(|_, w| unsafe {
+            w.res()
+                .bits(self.precision as u8)
+                .align()
+                .bit(self.align == Align::Left)
+        });
+
+        self.rb
+            .smpr()
+            .modify(|_, w| w.smp1().set(self.sample_time as u8));
+
+        self.rb
+            .chselr0()
+            .modify(|_, w| unsafe { w.bits(1 << PIN::channel()) });
+
+        self.rb.isr().modify(|_, w| w.eos().clear_bit_by_one());
+        self.rb.cr().modify(|_, w| w.adstart().set_bit());
+        while self.rb.isr().read().eos().bit_is_clear() {}
+
+        let res = self.rb.dr().read().bits() as u16;
+        let val = if self.align == Align::Left && self.precision == Precision::B_6 {
+            res << 8
+        } else {
+            res
+        };
+
+        self.power_down();
+        Ok(val)
+    }
+
+    pub fn read_temperature(&mut self) -> nb::Result<i16, Infallible> {
+        let mut vtemp = VTemp::new();
+        let vtemp_voltage: u16 = if vtemp.enabled(self) {
+            self.read_voltage(&mut vtemp)?
+        } else {
+            vtemp.enable(self);
+            let vtemp_voltage = self.read_voltage(&mut vtemp)?;
+            vtemp.disable(self);
+            vtemp_voltage
+        };
+
+        let ts_cal1: u32 = unsafe {
+            // DS12991 3.14.1
+            // at 3000 mV Vref+ and 30 degC
+            ptr::read_volatile(0x1FFF_75A8 as *const u16) as u32
+        };
+
+        let v30 = (3000_u32 * ts_cal1) >> 12; // mV
+                                              // 2.5 mV/degC
+        let t = 30 + (vtemp_voltage as i32 - v30 as i32) * 10 / 25;
+
+        Ok(t as i16)
     }
 
     pub fn release(self) -> ADC {
@@ -268,15 +352,15 @@ impl Adc {
     }
 
     fn power_up(&mut self) {
-        self.rb.isr.modify(|_, w| w.adrdy().set_bit());
-        self.rb.cr.modify(|_, w| w.aden().set_bit());
-        while self.rb.isr.read().adrdy().bit_is_clear() {}
+        self.rb.isr().modify(|_, w| w.adrdy().clear_bit_by_one());
+        self.rb.cr().modify(|_, w| w.aden().set_bit());
+        while self.rb.isr().read().adrdy().bit_is_clear() {}
     }
 
     fn power_down(&mut self) {
-        self.rb.cr.modify(|_, w| w.addis().set_bit());
-        self.rb.isr.modify(|_, w| w.adrdy().set_bit());
-        while self.rb.cr.read().aden().bit_is_set() {}
+        self.rb.cr().modify(|_, w| w.addis().set_bit());
+        self.rb.isr().modify(|_, w| w.adrdy().clear_bit_by_one());
+        while self.rb.cr().read().aden().bit_is_set() {}
     }
 }
 
@@ -305,10 +389,10 @@ where
 
     fn prepare_injected(&mut self, _pin: &mut PIN, triger_source: InjTrigSource) {
         self.rb
-            .cfgr1
+            .cfgr1()
             .modify(|_, w| unsafe { w.exten().bits(1).extsel().bits(triger_source as u8) });
 
-        self.rb.cfgr1.modify(|_, w| unsafe {
+        self.rb.cfgr1().modify(|_, w| unsafe {
             w.res() // set ADC resolution bits (ADEN must be =0)
                 .bits(self.precision as u8)
                 .align() // set alignment bit is  (ADSTART must be 0)
@@ -318,12 +402,12 @@ where
         self.power_up();
 
         self.rb
-            .smpr // set sampling time set 1 (ADSTART must be 0)
-            .modify(|_, w| unsafe { w.smp1().bits(self.sample_time as u8) });
+            .smpr() // set sampling time set 1 (ADSTART must be 0)
+            .modify(|_, w| w.smp1().set(self.sample_time as u8));
 
         self.rb
-            .chselr() // set activ channel acording chapter 15.12.9 (ADC_CFGR1; CHSELRMOD=0)
-            .modify(|_, w| unsafe { w.chsel().bits(1 << PIN::channel()) });
+            .chselr0() // set active channel acording chapter 15.12.9 (ADC_CFGR1; CHSELRMOD=0)
+            .modify(|_, w| unsafe { w.bits(1 << PIN::channel()) });
     }
 }
 
@@ -331,7 +415,7 @@ pub trait DmaMode<ADC> {
     /// Error type returned by ADC methods
     type Error;
     fn dma_enable(&mut self, enable: bool);
-    fn dma_circualr_mode(&mut self, enable: bool);
+    fn dma_circular_mode(&mut self, enable: bool);
 }
 
 impl DmaMode<Adc> for Adc {
@@ -339,58 +423,18 @@ impl DmaMode<Adc> for Adc {
 
     fn dma_enable(&mut self, enable: bool) {
         if enable {
-            self.rb.cfgr1.modify(|_, w| w.dmaen().set_bit()); //  enable dma beeing called
+            self.rb.cfgr1().modify(|_, w| w.dmaen().set_bit()); //  enable dma beeing called
         } else {
-            self.rb.cfgr1.modify(|_, w| w.dmaen().clear_bit()); //  disable dma beeing called
+            self.rb.cfgr1().modify(|_, w| w.dmaen().clear_bit()); //  disable dma beeing called
         }
     }
 
-    fn dma_circualr_mode(&mut self, enable: bool) {
+    fn dma_circular_mode(&mut self, enable: bool) {
         if enable {
-            self.rb.cfgr1.modify(|_, w| w.dmacfg().set_bit()); // activate circular mode
+            self.rb.cfgr1().modify(|_, w| w.dmacfg().set_bit()); // activate circular mode
         } else {
-            self.rb.cfgr1.modify(|_, w| w.dmacfg().clear_bit()); // disable circular mode
+            self.rb.cfgr1().modify(|_, w| w.dmacfg().clear_bit()); // disable circular mode
         }
-    }
-}
-
-impl<WORD, PIN> OneShot<Adc, WORD, PIN> for Adc
-where
-    WORD: From<u16>,
-    PIN: Channel<Adc, ID = u8>,
-{
-    type Error = ();
-
-    fn read(&mut self, _pin: &mut PIN) -> nb::Result<WORD, Self::Error> {
-        self.power_up();
-        self.rb.cfgr1.modify(|_, w| unsafe {
-            w.res()
-                .bits(self.precision as u8)
-                .align()
-                .bit(self.align == Align::Left)
-        });
-
-        self.rb
-            .smpr
-            .modify(|_, w| unsafe { w.smp1().bits(self.sample_time as u8) });
-
-        self.rb
-            .chselr()
-            .modify(|_, w| unsafe { w.chsel().bits(1 << PIN::channel()) });
-
-        self.rb.isr.modify(|_, w| w.eos().set_bit());
-        self.rb.cr.modify(|_, w| w.adstart().set_bit());
-        while self.rb.isr.read().eos().bit_is_clear() {}
-
-        let res = self.rb.dr.read().bits() as u16;
-        let val = if self.align == Align::Left && self.precision == Precision::B_6 {
-            res << 8
-        } else {
-            res
-        };
-
-        self.power_down();
-        Ok(val.into())
     }
 }
 
@@ -405,15 +449,15 @@ macro_rules! int_adc {
                 }
 
                 pub fn enable(&mut self, adc: &mut Adc) {
-                    adc.rb.ccr.modify(|_, w| w.$en().set_bit());
+                    adc.rb.ccr().modify(|_, w| w.$en().set_bit());
                 }
 
                 pub fn disable(&mut self, adc: &mut Adc) {
-                    adc.rb.ccr.modify(|_, w| w.$en().clear_bit());
+                    adc.rb.ccr().modify(|_, w| w.$en().clear_bit());
                 }
 
                 pub fn enabled(&self, adc: &Adc) -> bool {
-                    adc.rb.ccr.read().$en().bit_is_set()
+                    adc.rb.ccr().read().$en().bit_is_set()
                 }
             }
 
@@ -467,6 +511,19 @@ adc_pin! {
     Channel11: (gpiob::PB10<Analog>, 11u8),
     Channel15: (gpiob::PB11<Analog>, 15u8),
     Channel16: (gpiob::PB12<Analog>, 16u8),
+}
+
+#[cfg(any(feature = "stm32g030", feature = "stm32g031", feature = "stm32g041",))]
+adc_pin! {
+    Channel11: (gpiob::PB7<Analog>, 11u8),
+    Channel15: (gpioa::PA11<Analog>, 15u8),
+    Channel16: (gpioa::PA12<Analog>, 16u8),
+    Channel17: (gpioa::PA13<Analog>, 17u8),
+    Channel18: (gpioa::PA14<Analog>, 18u8),
+}
+
+#[cfg(any(feature = "stm32g070", feature = "stm32g071", feature = "stm32g081",))]
+adc_pin! {
     Channel17: (gpioc::PC4<Analog>, 17u8),
     Channel18: (gpioc::PC5<Analog>, 18u8),
 }

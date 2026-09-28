@@ -1,5 +1,4 @@
 #![deny(warnings)]
-#![deny(unsafe_code)]
 #![no_main]
 #![no_std]
 
@@ -20,7 +19,7 @@ fn main() -> ! {
 
     let mut rcc = dp.RCC.constrain();
     let gpioa = dp.GPIOA.split(&mut rcc);
-    let mut pwm = dp.TIM1.pwm(10.khz(), &mut rcc);
+    let mut pwm = dp.TIM1.pwm(10.kHz(), &mut rcc);
 
     let mut pwm_ch1 = pwm.bind_pin(gpioa.pa8);
     let mut pwm_ch2 = pwm.bind_pin(gpioa.pa9);
@@ -41,17 +40,17 @@ fn main() -> ! {
     pwm_ch2.set_duty(max / 16);
     asm::bkpt();
 
-    pwm.set_freq(20.khz());
+    pwm.set_freq(20.kHz());
 
     loop {}
 }
 
 #[exception]
-fn HardFault(ef: &ExceptionFrame) -> ! {
+unsafe fn HardFault(ef: &ExceptionFrame) -> ! {
     panic!("Hard fault {:#?}", ef);
 }
 
 #[exception]
-fn DefaultHandler(irqn: i16) {
+unsafe fn DefaultHandler(irqn: i16) {
     panic!("Unhandled exception (IRQn = {})", irqn);
 }

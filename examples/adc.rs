@@ -30,7 +30,7 @@ fn main() -> ! {
     adc.set_oversampling_shift(16);
     adc.oversampling_enable(true);
 
-    delay.delay(20.us()); // Wait for ADC voltage regulator to stabilize
+    delay.delay(20.micros()); // Wait for ADC voltage regulator to stabilize
     adc.calibrate();
 
     let mut adc_pin = gpioa.pa0.into_analog();
@@ -41,6 +41,6 @@ fn main() -> ! {
     loop {
         let u_mv = adc.read_voltage(&mut adc_pin).expect("adc read failed");
         let u_bat = adc.read_voltage(&mut vbat).expect("adc read failed");
-        hprintln!("VBat: {}mV | PA0: {}mV", u_bat * 3, u_mv).unwrap();
+        hprintln!("VBat: {}mV | PA0: {}mV", u_bat * 3, u_mv);
     }
 }

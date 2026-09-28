@@ -1,21 +1,24 @@
 use crate::prelude::*;
 use crate::time::Bps;
 
-#[derive(PartialEq, PartialOrd, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd)]
 pub enum WordLength {
     DataBits7,
     DataBits8,
     DataBits9,
 }
 
-#[derive(PartialEq, PartialOrd, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd)]
 pub enum Parity {
     ParityNone,
     ParityEven,
     ParityOdd,
 }
 
-#[derive(PartialEq, PartialOrd, Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd)]
 pub enum StopBits {
     #[doc = "1 stop bit"]
     STOP1 = 0b00,
@@ -33,7 +36,8 @@ impl StopBits {
     }
 }
 
-#[derive(PartialEq, PartialOrd, Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd)]
 pub enum FifoThreshold {
     #[doc = "1/8 of its depth"]
     FIFO_1_BYTE = 0b000,
@@ -54,21 +58,28 @@ impl FifoThreshold {
         self as u8
     }
 }
-#[derive(PartialEq, PartialOrd, Clone, Copy)]
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct BasicConfig {
     pub(crate) baudrate: Bps,
     pub(crate) wordlength: WordLength,
     pub(crate) parity: Parity,
     pub(crate) stopbits: StopBits,
+    pub(crate) inverted_tx: bool,
+    pub(crate) inverted_rx: bool,
     pub(crate) swap: bool,
 }
 
-#[derive(PartialEq, PartialOrd, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct FullConfig {
     pub(crate) baudrate: Bps,
     pub(crate) wordlength: WordLength,
     pub(crate) parity: Parity,
     pub(crate) stopbits: StopBits,
+    pub(crate) inverted_tx: bool,
+    pub(crate) inverted_rx: bool,
     pub(crate) swap: bool,
     pub(crate) fifo_enable: bool,
     pub(crate) tx_fifo_threshold: FifoThreshold,
@@ -100,6 +111,11 @@ impl BasicConfig {
         self
     }
 
+    pub fn wordlength_7(mut self) -> Self {
+        self.wordlength = WordLength::DataBits7;
+        self
+    }
+
     pub fn wordlength_8(mut self) -> Self {
         self.wordlength = WordLength::DataBits8;
         self
@@ -112,6 +128,16 @@ impl BasicConfig {
 
     pub fn stopbits(mut self, stopbits: StopBits) -> Self {
         self.stopbits = stopbits;
+        self
+    }
+
+    pub fn invert_tx(mut self) -> Self {
+        self.inverted_tx = true;
+        self
+    }
+
+    pub fn invert_rx(mut self) -> Self {
+        self.inverted_rx = true;
         self
     }
 
@@ -145,6 +171,11 @@ impl FullConfig {
         self
     }
 
+    pub fn wordlength_7(mut self) -> Self {
+        self.wordlength = WordLength::DataBits7;
+        self
+    }
+
     pub fn wordlength_8(mut self) -> Self {
         self.wordlength = WordLength::DataBits8;
         self
@@ -157,6 +188,16 @@ impl FullConfig {
 
     pub fn stopbits(mut self, stopbits: StopBits) -> Self {
         self.stopbits = stopbits;
+        self
+    }
+
+    pub fn invert_tx(mut self) -> Self {
+        self.inverted_tx = true;
+        self
+    }
+
+    pub fn invert_rx(mut self) -> Self {
+        self.inverted_rx = true;
         self
     }
 
@@ -212,6 +253,8 @@ impl Default for BasicConfig {
             wordlength: WordLength::DataBits8,
             parity: Parity::ParityNone,
             stopbits: StopBits::STOP1,
+            inverted_tx: false,
+            inverted_rx: false,
             swap: false,
         }
     }
@@ -225,6 +268,8 @@ impl Default for FullConfig {
             wordlength: WordLength::DataBits8,
             parity: Parity::ParityNone,
             stopbits: StopBits::STOP1,
+            inverted_tx: false,
+            inverted_rx: false,
             swap: false,
             fifo_enable: false,
             tx_fifo_threshold: FifoThreshold::FIFO_8_BYTES,

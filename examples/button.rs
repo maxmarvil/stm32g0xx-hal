@@ -21,15 +21,15 @@ fn main() -> ! {
     let mut delay = cp.SYST.delay(&mut rcc);
 
     let gpioc = dp.GPIOC.split(&mut rcc);
-    let button = gpioc.pc13.into_pull_up_input();
+    let mut button = gpioc.pc13.into_pull_up_input();
 
     let gpioa = dp.GPIOA.split(&mut rcc);
     let mut led = gpioa.pa5.into_push_pull_output();
 
     loop {
         let wait = match button.is_high() {
-            Ok(true) => 300.ms(),
-            Ok(false) => 100.ms(),
+            Ok(true) => 300.millis(),
+            Ok(false) => 100.millis(),
             _ => unreachable!(),
         };
         delay.delay(wait);

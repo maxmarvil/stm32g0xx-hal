@@ -27,7 +27,7 @@ impl COMP1 {
     pub fn csr(&self) -> &COMP1_CSR {
         // SAFETY: The COMP1 type is only constructed with logical ownership of
         // these registers.
-        &unsafe { &*COMP::ptr() }.comp1_csr
+        unsafe { &*COMP::ptr() }.comp1_csr()
     }
 }
 
@@ -39,7 +39,7 @@ impl COMP2 {
     pub fn csr(&self) -> &COMP2_CSR {
         // SAFETY: The COMP1 type is only constructed with logical ownership of
         // these registers.
-        &unsafe { &*COMP::ptr() }.comp2_csr
+        unsafe { &*COMP::ptr() }.comp2_csr()
     }
 }
 
@@ -94,7 +94,8 @@ impl Config {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Hysteresis {
     None = 0b00,
     Low = 0b01,
@@ -102,7 +103,8 @@ pub enum Hysteresis {
     High = 0b11,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PowerMode {
     HighSpeed = 0b00,
     MediumSpeed = 0b01,
@@ -136,7 +138,7 @@ macro_rules! window_input_pin {
     ($COMP:ident, $pin:ty) => {
         impl PositiveInput<$COMP> for $pin {
             fn setup(&self, comp: &$COMP) {
-                comp.csr().modify(|_, w| w.winmode().set_bit())
+                comp.csr().modify(|_, w| w.winmode().set_bit());
             }
         }
     };
@@ -149,41 +151,42 @@ macro_rules! positive_input_pin {
     ($COMP:ident, $pin:ty, $bits:expr) => {
         impl PositiveInput<$COMP> for $pin {
             fn setup(&self, comp: &$COMP) {
-                comp.csr().modify(|_, w| unsafe { w.inpsel().bits($bits) })
+                comp.csr().modify(|_, w| unsafe { w.inpsel().bits($bits) });
             }
         }
     };
 }
 
-positive_input_pin!(COMP1, gpioc::PC5<Analog>, 0b00);
-positive_input_pin!(COMP1, gpiob::PB2<Analog>, 0b01);
-positive_input_pin!(COMP1, gpioa::PA1<Analog>, 0b10);
+positive_input_pin!(COMP1, PC5<Analog>, 0b00);
+positive_input_pin!(COMP1, PB2<Analog>, 0b01);
+positive_input_pin!(COMP1, PA1<Analog>, 0b10);
 positive_input_pin!(COMP1, Open, 0b11);
 
-positive_input_pin!(COMP2, gpiob::PB4<Analog>, 0b00);
-positive_input_pin!(COMP2, gpiob::PB6<Analog>, 0b01);
-positive_input_pin!(COMP2, gpioa::PA3<Analog>, 0b10);
+positive_input_pin!(COMP2, PB4<Analog>, 0b00);
+positive_input_pin!(COMP2, PB6<Analog>, 0b01);
+positive_input_pin!(COMP2, PA3<Analog>, 0b10);
 positive_input_pin!(COMP2, Open, 0b11);
 
 macro_rules! negative_input_pin {
     ($COMP:ident, $pin:ty, $bits:expr) => {
         impl NegativeInput<$COMP> for $pin {
             fn setup(&self, comp: &$COMP) {
-                comp.csr().modify(|_, w| unsafe { w.inmsel().bits($bits) })
+                comp.csr().modify(|_, w| unsafe { w.inmsel().bits($bits) });
             }
         }
     };
 }
 
-negative_input_pin!(COMP1, gpiob::PB1<Analog>, 0b0110);
-negative_input_pin!(COMP1, gpioc::PC4<Analog>, 0b0111);
-negative_input_pin!(COMP1, gpioa::PA0<Analog>, 0b1000);
+negative_input_pin!(COMP1, PB1<Analog>, 0b0110);
+negative_input_pin!(COMP1, PC4<Analog>, 0b0111);
+negative_input_pin!(COMP1, PA0<Analog>, 0b1000);
 
-negative_input_pin!(COMP2, gpiob::PB3<Analog>, 0b0110);
-negative_input_pin!(COMP2, gpiob::PB7<Analog>, 0b0111);
-negative_input_pin!(COMP2, gpioa::PA2<Analog>, 0b1000);
+negative_input_pin!(COMP2, PB3<Analog>, 0b0110);
+negative_input_pin!(COMP2, PB7<Analog>, 0b0111);
+negative_input_pin!(COMP2, PA2<Analog>, 0b1000);
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RefintInput {
     /// VRefint * 1/4
     VRefintM14 = 0b0000,
@@ -200,7 +203,7 @@ macro_rules! refint_input {
         impl NegativeInput<$COMP> for RefintInput {
             fn setup(&self, comp: &$COMP) {
                 comp.csr()
-                    .modify(|_, w| unsafe { w.inmsel().bits(*self as u8) })
+                    .modify(|_, w| unsafe { w.inmsel().bits(*self as u8) });
             }
         }
     };
@@ -213,7 +216,7 @@ macro_rules! dac_input {
     ($COMP:ident, $channel:ty, $bits:expr) => {
         impl<ED> NegativeInput<$COMP> for &$channel {
             fn setup(&self, comp: &$COMP) {
-                comp.csr().modify(|_, w| unsafe { w.inmsel().bits($bits) })
+                comp.csr().modify(|_, w| unsafe { w.inmsel().bits($bits) });
             }
         }
     };
@@ -258,7 +261,7 @@ macro_rules! impl_comparator {
                 positive_input.setup(&self);
                 negative_input.setup(&self);
                 // Delay for scaler voltage bridge initialization for certain negative inputs
-                let voltage_scaler_delay = clocks.sys_clk.0 / (1_000_000 / 200); // 200us
+                let voltage_scaler_delay = clocks.sys_clk.raw() / (1_000_000 / 200); // 200us
                 cortex_m::asm::delay(voltage_scaler_delay);
                 self.csr().modify(|_, w| unsafe {
                     w.hyst()
@@ -499,11 +502,11 @@ pub fn window_comparator21<
 /// Enables the comparator peripheral, and splits the [`COMP`] into independent [`COMP1`] and [`COMP2`]
 pub fn split(_comp: COMP, rcc: &mut Rcc) -> (COMP1, COMP2) {
     // Enable COMP, SYSCFG, VREFBUF clocks
-    rcc.rb.apbenr2.modify(|_, w| w.syscfgen().set_bit());
+    rcc.rb.apbenr2().modify(|_, w| w.syscfgen().set_bit());
 
     // Reset COMP, SYSCFG, VREFBUF
-    rcc.rb.apbrstr2.modify(|_, w| w.syscfgrst().set_bit());
-    rcc.rb.apbrstr2.modify(|_, w| w.syscfgrst().clear_bit());
+    rcc.rb.apbrstr2().modify(|_, w| w.syscfgrst().set_bit());
+    rcc.rb.apbrstr2().modify(|_, w| w.syscfgrst().clear_bit());
 
     (COMP1 { _rb: PhantomData }, COMP2 { _rb: PhantomData })
 }
@@ -552,24 +555,24 @@ macro_rules! output_pin_open_drain {
     };
 }
 
-output_pin_push_pull!(COMP1, gpioa::PA0<Output<PushPull>>);
-output_pin_open_drain!(COMP1, gpioa::PA0<Output<OpenDrain>>);
-output_pin_push_pull!(COMP1, gpioa::PA6<Output<PushPull>>);
-output_pin_open_drain!(COMP1, gpioa::PA6<Output<OpenDrain>>);
-output_pin_push_pull!(COMP1, gpioa::PA11<Output<PushPull>>);
-output_pin_open_drain!(COMP1, gpioa::PA11<Output<OpenDrain>>);
-output_pin_push_pull!(COMP1, gpiob::PB0<Output<PushPull>>);
-output_pin_open_drain!(COMP1, gpiob::PB0<Output<OpenDrain>>);
-output_pin_push_pull!(COMP1, gpiob::PB10<Output<PushPull>>);
-output_pin_open_drain!(COMP1, gpiob::PB10<Output<OpenDrain>>);
+output_pin_push_pull!(COMP1, PA0<Output<PushPull>>);
+output_pin_open_drain!(COMP1, PA0<Output<OpenDrain>>);
+output_pin_push_pull!(COMP1, PA6<Output<PushPull>>);
+output_pin_open_drain!(COMP1, PA6<Output<OpenDrain>>);
+output_pin_push_pull!(COMP1, PA11<Output<PushPull>>);
+output_pin_open_drain!(COMP1, PA11<Output<OpenDrain>>);
+output_pin_push_pull!(COMP1, PB0<Output<PushPull>>);
+output_pin_open_drain!(COMP1, PB0<Output<OpenDrain>>);
+output_pin_push_pull!(COMP1, PB10<Output<PushPull>>);
+output_pin_open_drain!(COMP1, PB10<Output<OpenDrain>>);
 
-output_pin_push_pull!(COMP2, gpioa::PA2<Output<PushPull>>);
-output_pin_open_drain!(COMP2, gpioa::PA2<Output<OpenDrain>>);
-output_pin_push_pull!(COMP2, gpioa::PA7<Output<PushPull>>);
-output_pin_open_drain!(COMP2, gpioa::PA7<Output<OpenDrain>>);
-output_pin_push_pull!(COMP2, gpioa::PA12<Output<PushPull>>);
-output_pin_open_drain!(COMP2, gpioa::PA12<Output<OpenDrain>>);
-output_pin_push_pull!(COMP2, gpiob::PB5<Output<PushPull>>);
-output_pin_open_drain!(COMP2, gpiob::PB5<Output<OpenDrain>>);
-output_pin_push_pull!(COMP2, gpiob::PB11<Output<PushPull>>);
-output_pin_open_drain!(COMP2, gpiob::PB11<Output<OpenDrain>>);
+output_pin_push_pull!(COMP2, PA2<Output<PushPull>>);
+output_pin_open_drain!(COMP2, PA2<Output<OpenDrain>>);
+output_pin_push_pull!(COMP2, PA7<Output<PushPull>>);
+output_pin_open_drain!(COMP2, PA7<Output<OpenDrain>>);
+output_pin_push_pull!(COMP2, PA12<Output<PushPull>>);
+output_pin_open_drain!(COMP2, PA12<Output<OpenDrain>>);
+output_pin_push_pull!(COMP2, PB5<Output<PushPull>>);
+output_pin_open_drain!(COMP2, PB5<Output<OpenDrain>>);
+output_pin_push_pull!(COMP2, PB11<Output<PushPull>>);
+output_pin_open_drain!(COMP2, PB11<Output<OpenDrain>>);

@@ -1,5 +1,4 @@
 #![deny(warnings)]
-#![deny(unsafe_code)]
 #![no_main]
 #![no_std]
 
@@ -22,15 +21,15 @@ fn main() -> ! {
 
     let mut rcc = dp.RCC.constrain();
     let mut delay = cp.SYST.delay(&mut rcc);
-    hprintln!("Watchdog").unwrap();
+    hprintln!("Watchdog");
 
     let mut watchdog = dp.WWDG.constrain(&mut rcc);
     // let mut watchdog = dp.IWDG.constrain();
 
-    watchdog.start(100.ms());
+    watchdog.start(100.millis());
 
-    delay.delay(90.ms());
-    // delay.delay(110.ms());
+    delay.delay(90.millis());
+    // delay.delay(110.millis());
 
     cortex_m::asm::bkpt();
 
@@ -38,6 +37,6 @@ fn main() -> ! {
 }
 
 #[exception]
-fn HardFault(ef: &ExceptionFrame) -> ! {
+unsafe fn HardFault(ef: &ExceptionFrame) -> ! {
     panic!("Hard fault {:#?}", ef);
 }

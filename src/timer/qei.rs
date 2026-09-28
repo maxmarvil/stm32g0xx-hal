@@ -1,5 +1,4 @@
 //! Quadrature Encoder Interface
-use crate::hal::{self, Direction};
 use crate::rcc::*;
 
 #[cfg(feature = "stm32g0x1")]
@@ -9,6 +8,14 @@ use crate::stm32::{TIM1, TIM3};
 
 use crate::timer::pins::TimerPin;
 use crate::timer::*;
+
+/// Counting direction
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Direction {
+    Upcounting,
+    Downcounting,
+}
 
 pub struct Qei<TIM, PINS> {
     tim: TIM,
@@ -57,10 +64,13 @@ macro_rules! qei {
                     });
 
                     // Encoder mode 2.
-                    tim.smcr.write(|w| unsafe { w.sms().bits(0b010) });
+                    #[cfg(not(any(feature = "stm32g0b1", feature = "stm32g0c1")))]
+                    tim.smcr().write(|w| unsafe { w.sms().bits(0b010) });
+                    #[cfg(any(feature = "stm32g0b1", feature = "stm32g0c1"))]
+                    tim.smcr().write(|w| unsafe { w.sms1().bits(0b010) });
 
                     // Enable and configure to capture on rising edge
-                    tim.ccer.write(|w| {
+                    tim.ccer().write(|w| {
                         w.cc1e()
                             .set_bit()
                             .cc2e()
@@ -77,27 +87,25 @@ macro_rules! qei {
 
                     pins.setup();
 
-                    tim.cr1.write(|w| w.cen().set_bit());
+                    tim.cr1().write(|w| w.cen().set_bit());
                     Qei { tim, pins }
                 }
 
                 pub fn release(self) -> ($TIMX, PINS) {
                     (self.tim, self.pins.release())
                 }
-            }
 
-            impl<PINS> hal::Qei for Qei<$TIMX, PINS> {
-                type Count = u16;
-
-                fn count(&self) -> u16 {
-                    self.tim.cnt.read().$cnt().bits()
+                pub fn count(&self) -> u16 {
+                    // TODO: this impl should change to u32 for counters that
+                    // have > 16 bits of resolution.
+                    self.tim.cnt().read().$cnt().bits() as u16
                 }
 
-                fn direction(&self) -> Direction {
-                    if self.tim.cr1.read().dir().bit_is_clear() {
-                        hal::Direction::Upcounting
+                pub fn direction(&self) -> Direction {
+                    if self.tim.cr1().read().dir().bit_is_clear() {
+                        Direction::Upcounting
                     } else {
-                        hal::Direction::Downcounting
+                        Direction::Downcounting
                     }
                 }
             }
@@ -113,10 +121,10 @@ macro_rules! qei {
 
 qei! {
     TIM1: (tim1, arr, cnt),
-    TIM3: (tim3, arr_l, cnt_l),
+    TIM3: (tim3, arr_l, cnt),
 }
 
 #[cfg(feature = "stm32g0x1")]
 qei! {
-    TIM2: (tim2, arr_l, cnt_l),
+    TIM2: (tim2, arr_l, cnt),  // TODO: missing high value register?
 }

@@ -1,5 +1,4 @@
 #![deny(warnings)]
-#![deny(unsafe_code)]
 #![no_main]
 #![no_std]
 
@@ -30,23 +29,23 @@ fn main() -> ! {
     let mut rng = dp.RNG.constrain(Config::default(), &mut rcc);
     let mut random_bytes = [0u16; 3];
     match rng.fill(&mut random_bytes) {
-        Ok(()) => hprintln!("random bytes: {:?}", random_bytes).unwrap(),
-        Err(err) => hprintln!("RNG error: {:?}", err).unwrap(),
+        Ok(()) => hprintln!("random bytes: {:?}", random_bytes),
+        Err(err) => hprintln!("RNG error: {:?}", err),
     }
     loop {
         match rng.gen_range(20, 200) {
             Ok(period) => {
-                led.toggle().unwrap();
-                delay.delay(period.ms());
+                led.toggle().ok();
+                delay.delay(period.millis());
             }
-            Err(err) => hprintln!("RNG error: {:?}", err).unwrap(),
+            Err(err) => hprintln!("RNG error: {:?}", err),
         }
     }
 }
 
 #[allow(clippy::empty_loop)]
 #[exception]
-fn HardFault(ef: &ExceptionFrame) -> ! {
-    hprintln!("Hard fault {:#?}", ef).unwrap();
+unsafe fn HardFault(ef: &ExceptionFrame) -> ! {
+    hprintln!("Hard fault {:#?}", ef);
     loop {}
 }
